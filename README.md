@@ -10,5 +10,7 @@ conda create -n nlpcurr_perplexity python=3.10.12
 
 ## Curriculum
 
-| --- | --- | --- |
-|
+| **Paper Name**      | **Paper Link**                                      | **Code Link** | **Presenter** | **Presentation Date** |
+| ------------------- | --------------------------------------------------- | ------------- | ------------- | --------------------- |
+| Perplexity          | https://huggingface.co/docs/transformers/perplexity | NA            | Steve         | 8/29/2024             |
+| Word2Vec + Sampling | https://arxiv.org/pdf/1301.3781                     | NA            | Dalton        | 9/5/2024              |

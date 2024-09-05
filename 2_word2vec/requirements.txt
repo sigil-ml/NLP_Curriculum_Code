@@ -11,3 +11,4 @@ numpy==1.*
 tensorboard
 tqdm
 jupyterlab
+loguru

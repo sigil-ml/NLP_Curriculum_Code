@@ -1,2 +1,13 @@
+--find-links https://download.pytorch.org/whl/cu124
+torch
+lightning
+python-dotenv
+seaborn
+datasets
+transformers
+tokenizers
+matplotlib
+numpy==1.*
+tensorboard
 tqdm
 jupyterlab

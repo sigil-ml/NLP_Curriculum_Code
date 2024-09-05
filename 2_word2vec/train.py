@@ -127,6 +127,7 @@ def train(
     for epoch_idx in range(n_epochs):
         logger.info(f"\nEpoch: {epoch_idx}\n")
         for batch_idx, (X, y) in enumerate(train_dl):
+            print(X)
             y_hat = model(X)
             loss = loss_fn(y_hat, y)
             loss.backward()
@@ -144,6 +145,20 @@ def train(
 
 
 if __name__ == "__main__":
+    logger.info("__/\\\______________/\\\____/\\\\\\\\\______/\\\________/\\\_")
+    logger.info(" _\/\\\_____________\/\\\__/\\\///////\\\___\/\\\_______\/\\\_ ")
+    logger.info("  _\/\\\_____________\/\\\_\///______\//\\\__\//\\\______/\\\__ ")
+    logger.info(" v _\//\\\____/\\\____/\\\____________/\\\/____\//\\\____/\\\___")
+    logger.info("    __\//\\\__/\\\\\__/\\\__________/\\\//_______\//\\\__/\\\____")
+    logger.info("     ___\//\\\/\\\/\\\/\\\________/\\\//___________\//\\\/\\\_____")
+    logger.info("      ____\//\\\\\\//\\\\\_______/\\\/_______________\//\\\\\______")
+    logger.info("       _____\//\\\__\//\\\_______/\\\\\\\\\\\\\\\______\//\\\_______")
+    logger.info("        ______\///____\///_______\///////////////________\///________")
+
+    logger.info(
+        "\n=====================================================================\n"
+    )
+
     MODE = "CBOW"
     hyperparams = {
         "seed": 577,
@@ -158,36 +173,47 @@ if __name__ == "__main__":
         "n_training_epochs": 3,
         "lr": 1e-3,
     }
+    logger.info("Training configuration:\n")
+    logger.info(pprint(hyperparams))
     chunk_size = hyperparams["neighborhood_size"] * 2 + 1
 
     # Set random number generator seed
+    logger.info(f"Setting seeds with value: {hyperparams['seed']}")
     set_seeds(hyperparams["seed"])
 
     # Prepare dataset
-    ds = load_dataset("wikimedia/wikipedia", "20231101.en")
+    dataset_id = "wikimedia/wikipedia"
+    logger.info(f"Retrieving dataset: {dataset_id}")
+    ds = load_dataset(dataset_id, "20231101.en")
+    logger.info("Producing train/test splits")
     ds = ds["train"].train_test_split(test_size=hyperparams["test_set_proportion"])
 
     # Load pre-trained tokenizer
     tokenizer_path = Path("models/tokenizer.json")
+    logger.info(f"Loading tokenizer from {tokenizer_path}")
     with open(tokenizer_path, "r") as f:
         tokenizer_json = f.read()
     tokenizer = Tokenizer.from_str(tokenizer_json)
+    logger.info("Tokenizer loaded!")
 
     # Define PyTorch DataLoaders
     bs = hyperparams["batch_size"]
     train_dataset = ds["train"]
     test_dataset = ds["test"]
+    logger.info("Preparing collation function")
     collate_fn = partial(
         CBOW_collate_fn,
         chunk_size=chunk_size,
         neighborhood_size=hyperparams["neighborhood_size"],
     )
+    logger.info("Creating training dataloader")
     train_dl = DataLoader(
         train_dataset["text"],
         batch_size=bs,
         collate_fn=collate_fn,
         num_workers=hyperparams["n_dataloader_workers"],
     )
+    logger.info("Creating testing dataloader")
     test_dl = DataLoader(
         test_dataset["text"],
         batch_size=bs,
@@ -202,12 +228,15 @@ if __name__ == "__main__":
     )
 
     # Train
+    logger.info("Insantiating model")
     model = W2V_CBOW(
         tokenizer=tokenizer,
         embedding_dim=hyperparams["embedding_dim"],
         neighborhood_size=hyperparams["neighborhood_size"],
     )
+    logger.info("Initializing model weights")
     initialize_model_weights(model)
+    logger.info("Beginning training loop...")
     train(
         model=model,
         train_dl=loop_eval_dl,

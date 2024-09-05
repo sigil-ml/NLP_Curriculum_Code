@@ -30,6 +30,7 @@ from tokenizers.trainers import BpeTrainer
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 W2V: TypeAlias = W2V_CBOW
 
@@ -46,7 +47,7 @@ def set_seeds(seed: int) -> None:
 
 def CBOW_collate_fn(
     batch: list[str], chunk_size: int, neighborhood_size: int
-) -> dict[str, list[torch.Tensor]]:
+) -> tuple[torch.Tensor]:
     batch_input, batch_output = [], []
     batch_encoding = tokenizer.encode_batch(batch)
     for encoding in batch_encoding:
@@ -63,7 +64,7 @@ def CBOW_collate_fn(
     batch_input = torch.tensor(batch_input)
     batch_output = torch.tensor(batch_output)
 
-    return {"features": batch_input, "labels": batch_output}
+    return batch_input, batch_output
 
 
 def initialize_model_weights(model: W2V_CBOW, initialize_mode: str = "equal") -> None:
@@ -77,24 +78,27 @@ def initialize_model_weights(model: W2V_CBOW, initialize_mode: str = "equal") ->
         raise ValueError(f"Unsupport initialize mode: {initialize_mode}")
 
 
-def test_step(model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss):
+def test_step(
+    model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss, device: str = "cpu"
+):
     model.eval()
     size = len(test_dl.dataset)
     num_batches = len(test_dl)
     test_loss, correct = 0, 0
 
-    # Evaluating the model with torch.no_grad() ensures that no gradients are computed during test mode
-    # also serves to reduce unnecessary gradient computations and memory usage for tensors with requires_grad=True
     with torch.no_grad():
         for X, y in test_dl:
+            X = X.to(device)
+            y = y.to(device)
             y_hat = model(X)
+            # y_hat = y_hat.to(device)
             test_loss += loss_fn(y_hat, y).item()
             correct += (y_hat.argmax(1) == y).type(torch.float).sum().item()
 
     test_loss /= num_batches
     correct /= size
     logger.info(
-        f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n"
+        f"Test Error: \n Accuracy: {(correct):>0.1f}%, Avg loss: {test_loss:>8f} \n"
     )
 
 
@@ -110,6 +114,8 @@ def train(
     model: W2V_CBOW, train_dl: DataLoader, test_dl: DataLoader, hyperparams: dict
 ) -> None:
     assert hyperparams is not None, "Must supply a dictionary"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
     metrics_logging_path = Path("./runs").absolute()
     metrics_logger = SummaryWriter(log_dir=metrics_logging_path)
     ds_size = len(train_dl.dataset)
@@ -126,55 +132,65 @@ def train(
         chkpt_dir.mkdir(parents=True)
     for epoch_idx in range(n_epochs):
         logger.info(f"\nEpoch: {epoch_idx}\n")
-        for batch_idx, (X, y) in enumerate(train_dl):
-            print(X)
+        print("\n" + term_size * "_" + "\n")
+        for batch_idx, (X, y) in tqdm(enumerate(train_dl), desc="Iterating batches"):
+            X = X.to(device)
+            y = y.to(device)
             y_hat = model(X)
             loss = loss_fn(y_hat, y)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
             if batch_idx % hyperparams["logging_interval"] == 0:
+                metrics_logger.add_scalar("training_loss", loss.item())
                 loss, current = loss.item(), batch_idx * ds_size + len(X)
                 logger.info(f"loss: {loss:>7f}  [{current:>5d}/{ds_size:>5d}]")
 
             if batch_idx % chkpt_inter == 0:
                 logger.info("Saving checkpoint!")
-                torch.save(model.state_dict(), f"{run_id}/checkpoint_{chkpt_idx}.pth")
+                torch.save(
+                    model.state_dict(),
+                    f"checkpoints/GPU_run_1/checkpoint_{chkpt_idx}.pth",
+                )
                 chkpt_idx += 1
-        test_step(model, test_dl, loss_fn)
+        logger.info("Saving checkpoint!")
+        torch.save(
+            model.state_dict(),
+            f"checkpoints/GPU_run_1/checkpoint_epoch_{epoch_idx}.pth",
+        )
+        test_step(model, test_dl, loss_fn, device=device)
 
 
 if __name__ == "__main__":
-    logger.info("__/\\\______________/\\\____/\\\\\\\\\______/\\\________/\\\_")
-    logger.info(" _\/\\\_____________\/\\\__/\\\///////\\\___\/\\\_______\/\\\_ ")
-    logger.info("  _\/\\\_____________\/\\\_\///______\//\\\__\//\\\______/\\\__ ")
-    logger.info(" v _\//\\\____/\\\____/\\\____________/\\\/____\//\\\____/\\\___")
-    logger.info("    __\//\\\__/\\\\\__/\\\__________/\\\//_______\//\\\__/\\\____")
-    logger.info("     ___\//\\\/\\\/\\\/\\\________/\\\//___________\//\\\/\\\_____")
-    logger.info("      ____\//\\\\\\//\\\\\_______/\\\/_______________\//\\\\\______")
-    logger.info("       _____\//\\\__\//\\\_______/\\\\\\\\\\\\\\\______\//\\\_______")
-    logger.info("        ______\///____\///_______\///////////////________\///________")
-
-    logger.info(
-        "\n=====================================================================\n"
-    )
+    term_size = shutil.get_terminal_size().columns
+    print("\n" + term_size * "=" + "\n")
+    print("__/\\\______________/\\\____/\\\\\\\\\______/\\\________/\\\_")
+    print(" _\/\\\_____________\/\\\__/\\\///////\\\___\/\\\_______\/\\\_ ")
+    print("  _\/\\\_____________\/\\\_\///______\//\\\__\//\\\______/\\\__ ")
+    print(" v _\//\\\____/\\\____/\\\____________/\\\/____\//\\\____/\\\___")
+    print("    __\//\\\__/\\\\\__/\\\__________/\\\//_______\//\\\__/\\\____")
+    print("     ___\//\\\/\\\/\\\/\\\________/\\\//___________\//\\\/\\\_____")
+    print("      ____\//\\\\\\//\\\\\_______/\\\/_______________\//\\\\\______")
+    print("       _____\//\\\__\//\\\_______/\\\\\\\\\\\\\\\______\//\\\_______")
+    print("        ______\///____\///_______\///////////////________\///________")
+    print("\n" + term_size * "=" + "\n")
 
     MODE = "CBOW"
     hyperparams = {
         "seed": 577,
         "test_set_proportion": 0.05,
-        "batch_size": 4,
+        "batch_size": 32,
         "n_dataloader_workers": 8,
-        "neighborhood_size": 2,
-        "embedding_dim": 128,
-        "validation_interval": 10,
-        "checkpoint_interval": 5,
-        "logging_interval": 10,
-        "n_training_epochs": 3,
-        "lr": 1e-3,
+        "neighborhood_size": 8,
+        "embedding_dim": 2048,  # 2048
+        "validation_interval": 100,  # 20_000
+        "checkpoint_interval": 200,  # 20_000
+        "logging_interval": 10,  # 10_000
+        "n_training_epochs": 2,  # 4
+        "lr": 1e-4,
     }
-    logger.info("Training configuration:\n")
-    logger.info(pprint(hyperparams))
+    pprint(hyperparams)
+    print("\n" + term_size * "#" + "\n")
     chunk_size = hyperparams["neighborhood_size"] * 2 + 1
 
     # Set random number generator seed

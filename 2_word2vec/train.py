@@ -119,7 +119,12 @@ def train(
     assert hyperparams is not None, "Must supply a dictionary"
     run_id = hyperparams["run_id"]
     if resume:
-        mw_path = Path("./checkpoints/GPU_run_1")  # TODO: replace with run id
+        import os
+
+        mw_path = Path("./checkpoints/GPU_run_1/")  # TODO: replace with run id
+        mw_path = sorted(mw_path.glob("checkpoint_epoch_*.pth"), key=os.path.getctime)[
+            -1
+        ]
         logger.info(f"Resuming training, loading model at {mw_path}")
         checkpoint = torch.load(mw_path)
         model.load_state_dict(checkpoint)
@@ -153,7 +158,9 @@ def train(
     for epoch_idx in range(n_epochs):
         logger.info(f"Epoch: {epoch_idx}")
         print("\n" + term_size * "_" + "\n")
-        for batch_idx, (X, y) in tqdm(enumerate(train_dl)):
+        for batch_idx, (X, y) in tqdm(
+            enumerate(train_dl), total=len(train_dl), desc="Processing batch:"
+        ):
             X = X.to(device)
             y = y.to(device)
             y_hat = model(X)

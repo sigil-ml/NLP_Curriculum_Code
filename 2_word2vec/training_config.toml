@@ -1,7 +1,8 @@
 [Model]
-batch_size = 64
+batch_size = 32
 window_size = 5
 embedding_dim = 512
+optimimzer = "RAdam"
 
 [Train]
 mode = "CBOW"
@@ -11,11 +12,14 @@ dataset_name = "default"
 tokenizer_path = "models/tokenizer.json"
 n_debug_samples = 100
 seed = 577
-test_size = 0.05
+test_size = 0.1
 n_dl_workers = 8
 val_interval = 0.05
 ckpt_interval = 0.1
 logging_interval = 0.01
 n_epochs = 20
-lr = 0.01
+lr = 0.001
 resume = false
+
+[Misc]
+neptune_api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI2NTg2YzQ1ZC05ZjVhLTQ1YzUtOGE4Yy0wMjc1OWE2Y2RiZTgifQ=="

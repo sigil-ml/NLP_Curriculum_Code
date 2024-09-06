@@ -13,3 +13,4 @@ tqdm
 jupyterlab
 loguru
 toml
+neptune

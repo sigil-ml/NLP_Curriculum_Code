@@ -5,6 +5,7 @@ import random
 import shutil
 import time
 import toml
+import neptune
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -95,7 +96,8 @@ def initialize_model_weights(model: W2V_CBOW, initialize_mode: str = "equal") ->
         raise ValueError(f"Unsupported initialize mode: {initialize_mode}")
 
 
-def test_step(model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss, device, h_params: dict):
+def test_step(model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss, device, h_params: dict,
+              et: neptune.Run) -> None:
     model.eval()
     size = len(test_dl)
     num_batches = len(test_dl)
@@ -114,6 +116,8 @@ def test_step(model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss, dev
     logger.info(
         f"Test Metrics: \n Accuracy: {correct:>0.1f}%, Avg loss: {test_loss:>8f} \n"
     )
+    et["val/loss"] = test_loss
+    et["val/acc"] = correct
 
 
 def gen_epoch_str(epoch_idx: int) -> str:
@@ -196,6 +200,7 @@ def train(
         test_dl: DataLoader,
         h_params: dict,
         training_cfg: dict,
+        et: neptune.Run
 ) -> None:
     run_id = training_cfg["run_id"]
     should_resume = training_cfg["resume"]
@@ -216,6 +221,7 @@ def train(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
+    et["device"] = str(device)
     model = model.to(device)
 
     metrics_logging_path = Path(f"./runs/{run_id}").absolute()
@@ -225,8 +231,10 @@ def train(
         metrics_logging_path.mkdir(parents=True)
     metrics_logger = SummaryWriter(log_dir=str(metrics_logging_path))
 
-    log_inter = math.floor(len(train_dl) * training_cfg["logging_interval"])
-    chkpt_inter = math.floor(len(train_dl) * training_cfg["ckpt_interval"])
+    log_iter = math.floor(len(train_dl) * training_cfg["logging_interval"])
+    et["log_iter"] = log_iter
+    chkpt_iter = math.floor(len(train_dl) * training_cfg["ckpt_interval"])
+    et["chkpt_iter"] = chkpt_iter
     n_epochs = training_cfg["n_epochs"]
 
     model.train()
@@ -246,9 +254,10 @@ def train(
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-            if batch_idx % log_inter == 0:
+            if batch_idx % log_iter == 0:
                 metrics_logger.add_scalar("training_loss", loss.item())
                 loss = loss.item()
+                et["train/loss"].append(loss)
                 batch_idx_str_len = len(str(batch_idx))
                 train_dl_str_len = len(str(len(train_dl)))
                 batch_str_delta = train_dl_str_len - batch_idx_str_len
@@ -263,7 +272,7 @@ def train(
                         logger.info(
                             f"{TermColors.UNDERLINE}Loss{TermColors.ENDC}: {TermColors.BAD}{loss:<7f}{TermColors.ENDC} [{batch_str_delta * '0'}{batch_idx}/{TermColors.BOLD}{len(train_dl)}{TermColors.ENDC}]")
                     prev_loss = loss
-            if batch_idx % chkpt_inter == 0:
+            if batch_idx % chkpt_iter == 0:
                 logger.info(
                     f"{TermColors.BOLD}Saving checkpoint to: {chkpt_dir / f'checkpoint_{chkpt_idx}.pth'}{TermColors.ENDC}")
                 torch.save(
@@ -288,7 +297,7 @@ def train(
         )
 
         logger.info("Running validation")
-        test_step(model, test_dl, loss_fn, device=device, h_params=h_params)
+        test_step(model, test_dl, loss_fn, device=device, h_params=h_params, et=et)
 
 
 if __name__ == "__main__":
@@ -312,10 +321,19 @@ if __name__ == "__main__":
     training_cfg_path = Path("./training_config.toml")
     logger.info(f"Loading training configuration from {training_cfg_path}")
     assert training_cfg_path.exists(), f"Cannot find training config! Supplied path: {training_cfg_path}"
-
     cfg = toml.load(training_cfg_path)
     h_params = cfg["Model"]
     train_cfg = cfg["Train"]
+    misc_cfg = cfg["Misc"]
+
+    # Experiment tracking
+    et = neptune.init_run(
+        project="dwalker/Word2Vec",
+        api_token=misc_cfg["neptune_api_token"],
+    )
+
+    et["hyperparameters"] = h_params
+    et["Training"] = train_cfg
 
     model_table = Table(title="Model Configurations")
     model_table.add_column("Key", no_wrap=True)
@@ -391,7 +409,7 @@ if __name__ == "__main__":
         neighborhood_size=window_size,
     )
     lr = train_cfg["lr"]
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.RAdam(model.parameters(), lr=lr)
     loss_fn = nn.CrossEntropyLoss()
     logger.info("Beginning training loop...")
     train(
@@ -402,4 +420,7 @@ if __name__ == "__main__":
         test_dl=test_dl,
         h_params=h_params,
         training_cfg=train_cfg,
+        et=et
     )
+
+    et.stop()

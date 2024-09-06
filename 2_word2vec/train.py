@@ -159,7 +159,11 @@ def train(
         logger.info(f"Epoch: {epoch_idx}")
         print("\n" + term_size * "_" + "\n")
         for batch_idx, (X, y) in tqdm(
-            enumerate(train_dl), total=len(train_dl), desc="Processing batch:"
+            enumerate(train_dl),
+            total=len(train_dl),
+            desc="Processing batches",
+            position=0,
+            leave=True,
         ):
             X = X.to(device)
             y = y.to(device)

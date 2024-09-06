@@ -4,13 +4,14 @@ import os
 import random
 import shutil
 import time
+import toml
 from datetime import datetime
 from functools import partial
 from pathlib import Path
 from pprint import pprint
 from time import perf_counter
 from timeit import default_timer as timer
-from typing import TypeAlias
+from typing import TypeAlias, Callable, TypeVar
 
 import lightning as L
 import matplotlib.pyplot as plt
@@ -18,9 +19,10 @@ import matplotlib_inline.backend_inline
 import numpy as np
 import pytorch_lightning as pl
 import seaborn as sns
+import tokenizers
 import torch
 import torch.nn.functional as F
-from datasets import DatasetDict, load_dataset
+from datasets import DatasetDict, load_dataset, Dataset
 from dotenv import load_dotenv
 from IPython.display import HTML, display
 from lightning.pytorch.loggers import TensorBoardLogger
@@ -48,18 +50,19 @@ def set_seeds(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def CBOW_collate_fn(
-    batch: list[str], chunk_size: int, neighborhood_size: int
-) -> tuple[torch.Tensor]:
+# noinspection SpellCheckingInspection
+def cbow_collate_fn(
+        batch: list[dict], chunk_size: int, neighborhood_size: int
+) -> tuple[torch.Tensor, torch.Tensor]:
     batch_input, batch_output = [], []
-    batch_encoding = tokenizer.encode_batch(batch)
-    for encoding in batch_encoding:
+    for sample in batch:
+        encoding = tokenizer.encode(sample["text"])
         if len(encoding.ids) < chunk_size:
             continue
         seq_len = len(encoding.ids)
         n_possible_chunks = seq_len // chunk_size
         for i in range(0, n_possible_chunks * chunk_size, chunk_size):
-            chunk = encoding.ids[i : i + chunk_size]
+            chunk = encoding.ids[i: i + chunk_size]
             output = chunk.pop(neighborhood_size)
             batch_input.append(chunk)
             batch_output.append(output)
@@ -78,12 +81,12 @@ def initialize_model_weights(model: W2V_CBOW, initialize_mode: str = "equal") ->
             else:
                 param.data.normal_(std=1.0 / math.sqrt(param.shape[1]))
     else:
-        raise ValueError(f"Unsupport initialize mode: {initialize_mode}")
+        raise ValueError(f"Unsupported initialize mode: {initialize_mode}")
 
 
-def test_step(model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss, device):
+def test_step(model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss, device, h_params: dict):
     model.eval()
-    size = len(test_dl.dataset)
+    size = len(test_dl)
     num_batches = len(test_dl)
     test_loss, correct = 0, 0
 
@@ -92,39 +95,103 @@ def test_step(model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss, dev
             X = X.to(device)
             y = y.to(device)
             y_hat = model(X)
-            # y_hat = y_hat.to(device)
             test_loss += loss_fn(y_hat, y).item()
             correct += (y_hat.argmax(1) == y).type(torch.float).sum().item()
 
     test_loss /= num_batches
-    correct /= size
+    correct /= (size * h_params["batch_size"])
     logger.info(
-        f"Test Error: \n Accuracy: {(correct):>0.1f}%, Avg loss: {test_loss:>8f} \n"
+        f"Test Metrics: \n Accuracy: {correct:>0.1f}%, Avg loss: {test_loss:>8f} \n"
     )
 
 
 def gen_epoch_str(epoch_idx: int) -> str:
     ret_str = f"Epoch: {epoch_idx} "
     str_size = len(ret_str)
-    term_size = shutil.get_terminal_size()
+    term_size = shutil.get_terminal_size().columns
     fill_size = term_size - str_size - 1
     return ret_str + fill_size * "_"
 
 
+def load_tokenizer(path: Path) -> tokenizers.Tokenizer:
+    logger.info(f"Loading tokenizer from {path}")
+    with open(path, "r") as f:
+        tokenizer_json = f.read()
+    tokenizer = Tokenizer.from_str(tokenizer_json)
+    logger.info("Tokenizer loaded!")
+    return tokenizer
+
+
+def prepare_dataset(
+        path: str | Path, name: str = None, test_size: float = 0.1
+) -> DatasetDict:
+    logger.info(f"Retrieving dataset: {path}")
+    if name:
+        ds = load_dataset(path=path, name=name)
+    else:
+        ds = load_dataset(path)
+    logger.info("Producing train/test splits")
+    ds = ds["train"].train_test_split(test_size=test_size)
+    return ds
+
+
+def build_dataloaders(
+        train_ds: Dataset | list,
+        test_ds: Dataset | list,
+        debug_ds: Dataset | list,
+        batch_size: int,
+        collate_fn: Callable,
+        n_workers: int = 1,
+        debug: bool = False,
+) -> tuple[DataLoader, DataLoader, DataLoader | None]:
+    if debug:
+        logger.info("Building train, test, and debug dataloaders")
+    else:
+        logger.info("Building train and test dataloaders")
+    logger.info(f"Batch size: {batch_size}, Number of workers: {n_workers}")
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        num_workers=n_workers,
+    )
+    logger.info("Train dataloader constructed")
+    test_dl = DataLoader(
+        test_ds,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        num_workers=n_workers,
+    )
+    logger.info("Test dataloader constructed")
+    if debug:
+        debug_dl = DataLoader(
+            debug_ds,
+            batch_size=batch_size,
+            collate_fn=collate_fn,
+            num_workers=n_workers,
+        )
+        logger.info("Debug dataloader constructed")
+    else:
+        debug_dl = None
+
+    return train_dl, test_dl, debug_dl
+
+
 def train(
-    model: W2V_CBOW,
-    optimizer,
-    train_dl: DataLoader,
-    test_dl: DataLoader,
-    hyperparams: dict,
-    resume: bool = False,
+        model: W2V_CBOW,
+        optimizer,
+        loss_fn,
+        train_dl: DataLoader,
+        test_dl: DataLoader,
+        h_params: dict,
+        training_cfg: dict,
 ) -> None:
-    assert hyperparams is not None, "Must supply a dictionary"
-    run_id = hyperparams["run_id"]
-    if resume:
+    run_id = training_cfg["run_id"]
+    should_resume = training_cfg["resume"]
+    if should_resume:
         import os
 
-        mw_path = Path("./checkpoints/GPU_run_1/")  # TODO: replace with run id
+        mw_path = Path(f"./checkpoints/{run_id}/")
         mw_path = sorted(mw_path.glob("checkpoint_epoch_*.pth"), key=os.path.getctime)[
             -1
         ]
@@ -145,13 +212,12 @@ def train(
     if not metrics_logging_path.exists():
         logger.warning("Metrics logging directory not found, creating...")
         metrics_logging_path.mkdir(parents=True)
-    metrics_logger = SummaryWriter(log_dir=metrics_logging_path)
+    metrics_logger = SummaryWriter(log_dir=str(metrics_logging_path))
 
-    ds_size = len(train_dl.dataset)
-
-    chkpt_inter = hyperparams["checkpoint_interval"]
-    n_epochs = hyperparams["n_training_epochs"]
-    loss_fn = nn.CrossEntropyLoss()
+    ds_size = len(train_dl)
+    log_inter = len(train_dl) * training_cfg["logging_interval"]
+    chkpt_inter = len(train_dl) * training_cfg["ckpt_interval"]
+    n_epochs = training_cfg["n_epochs"]
 
     model.train()
     chkpt_idx = 0
@@ -161,11 +227,19 @@ def train(
     for epoch_idx in range(n_epochs):
         logger.info(f"Epoch: {epoch_idx}")
         print("\n" + term_size * "_" + "\n")
-        n_updates = 1_000
-        min_log_iters = len(train_dl) / n_updates
         batch_start_time = timer()
         for batch_idx, (X, y) in enumerate(train_dl):
-            if batch_idx % min_log_iters == 0:
+            X = X.to(device)
+            y = y.to(device)
+            y_hat = model(X)
+            loss = loss_fn(y_hat, y)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            if batch_idx % log_inter == 0:
+                metrics_logger.add_scalar("training_loss", loss.item())
+                loss, current = loss.item(), batch_idx * ds_size + len(X)
+
                 cur_time = timer()
                 if batch_idx == 0:
                     estimated_completion_time = len(train_dl) * cur_time
@@ -177,20 +251,10 @@ def train(
                 logger.info(f"Processing batch {batch_idx}/{len(train_dl)}")
                 logger.info(f"Current elapsed time: {elapsed_time}")
                 logger.info(f"Estimated completion time: {completion_time_stamp}")
-            X = X.to(device)
-            y = y.to(device)
-            y_hat = model(X)
-            loss = loss_fn(y_hat, y)
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            if batch_idx % hyperparams["logging_interval"] == 0:
-                metrics_logger.add_scalar("training_loss", loss.item())
-                loss, current = loss.item(), batch_idx * ds_size + len(X)
                 logger.info(f"loss: {loss:>7f}  [{current:>5d}/{ds_size:>5d}]")
 
             if batch_idx % chkpt_inter == 0:
-                logger.info("Saving checkpoint!")
+                logger.info(f"Saving checkpoint to: {chkpt_dir / f'checkpoint_{chkpt_idx}.pth'}")
                 torch.save(
                     {
                         "epoch": epoch_idx,
@@ -200,20 +264,23 @@ def train(
                     },
                     chkpt_dir / f"checkpoint_{chkpt_idx}.pth",
                 )
-                torch.save(
-                    model.state_dict(),
-                    f"checkpoints/GPU_run_4/checkpoint_{chkpt_idx}.pth",
-                )
                 chkpt_idx += 1
-        logger.info("Saving checkpoint!")
+        logger.info(f"Saving epoch checkpoint to: {f'checkpoint_epoch_{chkpt_idx}.pth'}")
         torch.save(
-            model.state_dict(),
-            f"checkpoints/GPU_run_3/checkpoint_epoch_{epoch_idx}.pth",
+            {
+                "epoch": epoch_idx,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+            },
+            chkpt_dir / f"checkpoint_epoch_{chkpt_idx}.pth",
         )
-        test_step(model, test_dl, loss_fn, device=device)
+
+        logger.info("Running validation")
+        test_step(model, test_dl, loss_fn, device=device, h_params=h_params)
 
 
 if __name__ == "__main__":
+    ##############################################################################
     term_size = shutil.get_terminal_size().columns
     print("\n" + term_size * "=" + "\n")
     print("__/\\\______________/\\\____/\\\\\\\\\______/\\\________/\\\_")
@@ -226,91 +293,72 @@ if __name__ == "__main__":
     print("       _____\//\\\__\//\\\_______/\\\\\\\\\\\\\\\______\//\\\_______")
     print("        ______\///____\///_______\///////////////________\///________")
     print("\n" + term_size * "=" + "\n")
+    ##############################################################################
 
-    MODE = "CBOW"
-    hyperparams = {
-        "run_id": "GPU_1_retrain",
-        "seed": 577,
-        "test_set_proportion": 0.05,
-        "batch_size": 64,
-        "n_dataloader_workers": 8,
-        "neighborhood_size": 6,
-        "embedding_dim": 2048,  # 2048
-        "validation_interval": 20_000,  # 20_000
-        "checkpoint_interval": 20_000,  # 20_000
-        "logging_interval": 10_000,  # 10_000
-        "n_training_epochs": 20,  # 4
-        "lr": 0.001,
-    }
-    pprint(hyperparams)
-    print("\n" + term_size * "#" + "\n")
-    chunk_size = hyperparams["neighborhood_size"] * 2 + 1
+    # Load training configuration
+    training_cfg_path = Path("./training_config.toml")
+    logger.info(f"Loading training configuration from {training_cfg_path}")
+    assert training_cfg_path.exists(), f"Cannot find training config! Supplied path: {training_cfg_path}"
+
+    cfg = toml.load(training_cfg_path)
+    h_params = cfg["Model"]
+    train_cfg = cfg["Train"]
+
+    mode = train_cfg["mode"]
+    window_size = h_params["window_size"]
+    chunk_size = window_size * 2 + 1
 
     # Set random number generator seed
-    logger.info(f"Setting seeds with value: {hyperparams['seed']}")
-    set_seeds(hyperparams["seed"])
+    seed = train_cfg['seed']
+    logger.info(f"Setting seeds with value: {seed}")
+    set_seeds(seed)
 
     # Prepare dataset
-    dataset_id = "wikimedia/wikipedia"
-    logger.info(f"Retrieving dataset: {dataset_id}")
-    ds = load_dataset(dataset_id, "20231101.en")
-    logger.info("Producing train/test splits")
-    ds = ds["train"].train_test_split(test_size=hyperparams["test_set_proportion"])
+    # dataset_path = "wikimedia/wikipedia"
+    dataset_path = train_cfg["dataset_path"]
+    # dataset_name = "20231101.en"
+    dataset_name = train_cfg["dataset_name"]
+    dataset_test_size = train_cfg["test_size"]
+    ds = prepare_dataset(dataset_path, dataset_name, dataset_test_size)
 
     # Load pre-trained tokenizer
-    tokenizer_path = Path("models/tokenizer.json")
-    logger.info(f"Loading tokenizer from {tokenizer_path}")
-    with open(tokenizer_path, "r") as f:
-        tokenizer_json = f.read()
-    tokenizer = Tokenizer.from_str(tokenizer_json)
-    logger.info("Tokenizer loaded!")
+    tokenizer_path = Path(train_cfg["tokenizer_path"])
+    tokenizer = load_tokenizer(tokenizer_path)
 
     # Define PyTorch DataLoaders
-    bs = hyperparams["batch_size"]
-    train_dataset = ds["train"]
-    test_dataset = ds["test"]
+    batch_size = h_params["batch_size"]
+    n_workers = train_cfg["n_dl_workers"]
+    train_ds = ds["train"]
+    test_ds = ds["test"]
     logger.info("Preparing collation function")
     collate_fn = partial(
-        CBOW_collate_fn,
+        cbow_collate_fn,
         chunk_size=chunk_size,
-        neighborhood_size=hyperparams["neighborhood_size"],
+        neighborhood_size=window_size,
     )
-    logger.info("Creating training dataloader")
-    train_dl = DataLoader(
-        train_dataset["text"],
-        batch_size=bs,
-        collate_fn=collate_fn,
-        num_workers=hyperparams["n_dataloader_workers"],
-    )
-    logger.info("Creating testing dataloader")
-    test_dl = DataLoader(
-        test_dataset["text"],
-        batch_size=bs,
-        collate_fn=collate_fn,
-        num_workers=hyperparams["n_dataloader_workers"],
-    )
-    loop_eval_dl = DataLoader(
-        train_dataset[0:100]["text"],
-        batch_size=bs,
-        collate_fn=collate_fn,
-        num_workers=hyperparams["n_dataloader_workers"],
+    n_debug_samples = train_cfg["n_debug_samples"]
+    debug_ds = train_ds[:n_debug_samples]
+    train_dl, test_dl, debug_dl = build_dataloaders(
+        train_ds, test_ds, debug_ds, batch_size, collate_fn, n_workers, False
     )
 
     # Train
-    logger.info("Insantiating model")
+    logger.info("Instantiating model")
     model = W2V_CBOW(
         tokenizer=tokenizer,
-        embedding_dim=hyperparams["embedding_dim"],
-        neighborhood_size=hyperparams["neighborhood_size"],
+        embedding_dim=h_params["embedding_dim"],
+        neighborhood_size=window_size,
     )
-    lr = hyperparams["lr"]
+    lr = train_cfg["lr"]
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_fn = nn.CrossEntropyLoss()
     logger.info("Beginning training loop...")
     train(
         model=model,
         optimizer=optimizer,
+        loss_fn=loss_fn,
         train_dl=train_dl,
         test_dl=test_dl,
-        hyperparams=hyperparams,
-        resume=True,
+        h_params=h_params,
+        training_cfg=train_cfg,
     )

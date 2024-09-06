@@ -1,0 +1,21 @@
+[Model]
+batch_size = 64
+window_size = 5
+embedding_dim = 512
+
+[Train]
+mode = "CBOW"
+run_id = "CBOW_W2V_5W_512"
+dataset_path = "roneneldan/TinyStories"
+dataset_name = "default"
+tokenizer_path = "models/tokenizer.json"
+n_debug_samples = 100
+seed = 577
+test_size = 0.05
+n_dl_workers = 8
+val_interval = 0.05
+ckpt_interval = 0.1
+logging_interval = 0.01
+n_epochs = 20
+lr = 0.01
+resume = false

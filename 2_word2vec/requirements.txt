@@ -12,3 +12,4 @@ tensorboard
 tqdm
 jupyterlab
 loguru
+toml

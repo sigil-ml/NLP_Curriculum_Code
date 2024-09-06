@@ -78,9 +78,7 @@ def initialize_model_weights(model: W2V_CBOW, initialize_mode: str = "equal") ->
         raise ValueError(f"Unsupport initialize mode: {initialize_mode}")
 
 
-def test_step(
-    model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss, device: str = "cpu"
-):
+def test_step(model: W2V, test_dl: DataLoader, loss_fn: nn.CrossEntropyLoss, device):
     model.eval()
     size = len(test_dl.dataset)
     num_batches = len(test_dl)
@@ -111,29 +109,35 @@ def gen_epoch_str(epoch_idx: int) -> str:
 
 
 def train(
-    model: W2V_CBOW, train_dl: DataLoader, test_dl: DataLoader, hyperparams: dict
+    model: W2V_CBOW,
+    optimizer,
+    train_dl: DataLoader,
+    test_dl: DataLoader,
+    hyperparams: dict,
 ) -> None:
     assert hyperparams is not None, "Must supply a dictionary"
+    run_id = hyperparams["run_id"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
-    metrics_logging_path = Path("./runs").absolute()
+    metrics_logging_path = Path(f"./runs/{run_id}").absolute()
+    if not metrics_logging_path.exists():
+        metrics_logging_path.mkdir(parents=True)
     metrics_logger = SummaryWriter(log_dir=metrics_logging_path)
     ds_size = len(train_dl.dataset)
-    lr = hyperparams["lr"]
+
     chkpt_inter = hyperparams["checkpoint_interval"]
     n_epochs = hyperparams["n_training_epochs"]
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
     model.train()
     chkpt_idx = 0
-    run_id = str(datetime.now()).replace(" ", "_")
     chkpt_dir = Path(f"./checkpoints/{run_id}")
     if not chkpt_dir.exists():
         chkpt_dir.mkdir(parents=True)
     for epoch_idx in range(n_epochs):
         logger.info(f"\nEpoch: {epoch_idx}\n")
         print("\n" + term_size * "_" + "\n")
-        for batch_idx, (X, y) in tqdm(enumerate(train_dl), desc="Iterating batches"):
+        for batch_idx, (X, y) in tqdm(enumerate(train_dl)):
             X = X.to(device)
             y = y.to(device)
             y_hat = model(X)
@@ -149,14 +153,23 @@ def train(
             if batch_idx % chkpt_inter == 0:
                 logger.info("Saving checkpoint!")
                 torch.save(
+                    {
+                        "epoch": epoch_idx,
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "loss": loss,
+                    },
+                    chkpt_dir / f"checkpoint_{chkpt_idx}.pth",
+                )
+                torch.save(
                     model.state_dict(),
-                    f"checkpoints/GPU_run_1/checkpoint_{chkpt_idx}.pth",
+                    f"checkpoints/GPU_run_4/checkpoint_{chkpt_idx}.pth",
                 )
                 chkpt_idx += 1
         logger.info("Saving checkpoint!")
         torch.save(
             model.state_dict(),
-            f"checkpoints/GPU_run_1/checkpoint_epoch_{epoch_idx}.pth",
+            f"checkpoints/GPU_run_3/checkpoint_epoch_{epoch_idx}.pth",
         )
         test_step(model, test_dl, loss_fn, device=device)
 
@@ -177,17 +190,18 @@ if __name__ == "__main__":
 
     MODE = "CBOW"
     hyperparams = {
+        "run_id": "GPU_1_retrain",
         "seed": 577,
         "test_set_proportion": 0.05,
-        "batch_size": 32,
+        "batch_size": 64,
         "n_dataloader_workers": 8,
-        "neighborhood_size": 8,
+        "neighborhood_size": 6,
         "embedding_dim": 2048,  # 2048
-        "validation_interval": 100,  # 20_000
-        "checkpoint_interval": 200,  # 20_000
-        "logging_interval": 10,  # 10_000
-        "n_training_epochs": 2,  # 4
-        "lr": 1e-4,
+        "validation_interval": 20_000,  # 20_000
+        "checkpoint_interval": 20_000,  # 20_000
+        "logging_interval": 10_000,  # 10_000
+        "n_training_epochs": 20,  # 4
+        "lr": 0.001,
     }
     pprint(hyperparams)
     print("\n" + term_size * "#" + "\n")
@@ -250,12 +264,20 @@ if __name__ == "__main__":
         embedding_dim=hyperparams["embedding_dim"],
         neighborhood_size=hyperparams["neighborhood_size"],
     )
+    lr = hyperparams["lr"]
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model_weights = Path("./checkpoints/GPU_run_1")
+    # checkpoint = torch.load(model_weights, weights_only=True)
+    model.load_state_dict(model_weights)
+    # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    # loss = checkpoint["loss"]
     logger.info("Initializing model weights")
-    initialize_model_weights(model)
+    # initialize_model_weights(model)
     logger.info("Beginning training loop...")
     train(
         model=model,
-        train_dl=loop_eval_dl,
-        test_dl=loop_eval_dl,
+        optimizer=optimizer,
+        train_dl=train_dl,
+        test_dl=test_dl,
         hyperparams=hyperparams,
     )

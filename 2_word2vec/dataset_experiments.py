@@ -1,9 +1,10 @@
 import datasets
 from pathlib import Path
 import toml
-from train import cbow_collate_fn, build_dataloaders, load_tokenizer
+from train import cbow_collate_fn, build_dataloaders, load_tokenizer, prepare_dataset
 from functools import partial
 import time
+import torch
 
 if __name__ == '__main__':
     training_cfg_path = Path("./training_config.toml")
@@ -13,7 +14,7 @@ if __name__ == '__main__':
     train_cfg = cfg["Train"]
     misc_cfg = cfg["Misc"]
 
-    ds = datasets.load_dataset("roneneldan/TinyStories")
+    ds = prepare_dataset("roneneldan/TinyStories", "default", 0.2)
     tokenizer_path = Path(train_cfg["tokenizer_path"])
     tokenizer = load_tokenizer(tokenizer_path)
 
@@ -27,14 +28,17 @@ if __name__ == '__main__':
         cbow_collate_fn,
         chunk_size=chunk_size,
         neighborhood_size=window_size,
+        tokenizer=tokenizer,
     )
     n_debug_samples = train_cfg["n_debug_samples"]
     debug_ds = train_ds[:n_debug_samples]
     train_dl, test_dl, debug_dl = build_dataloaders(
         train_ds, test_ds, debug_ds, batch_size, collate_fn, n_workers, False
     )
-
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     start_time = time.time()
-    # exp
+    for (X, y) in test_dl:
+        X = X.to(device)
+        y = y.to(device)
     end_time = time.time()
     print(f"Elapsed time: {end_time - start_time:.4f} seconds")

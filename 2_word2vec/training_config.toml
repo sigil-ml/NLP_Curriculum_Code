@@ -1,5 +1,5 @@
 [Model]
-batch_size = 32
+batch_size = 512
 window_size = 5
 embedding_dim = 512
 optimimzer = "RAdam"

@@ -64,11 +64,12 @@ def set_seeds(seed: int) -> None:
 
 # noinspection SpellCheckingInspection
 def cbow_collate_fn(
-        batch: list[dict], chunk_size: int, neighborhood_size: int
+        batch: list[dict], chunk_size: int, neighborhood_size: int, tokenizer: Tokenizer
 ) -> tuple[torch.Tensor, torch.Tensor]:
     batch_input, batch_output = [], []
-    for sample in batch:
-        encoding = tokenizer.encode(sample["text"])
+    batch_text = [s["text"] for s in batch]
+    encodings = tokenizer.encode_batch(batch_text)
+    for encoding in encodings:
         if len(encoding.ids) < chunk_size:
             continue
         seq_len = len(encoding.ids)
@@ -169,6 +170,7 @@ def build_dataloaders(
         batch_size=batch_size,
         collate_fn=collate_fn,
         num_workers=n_workers,
+        pin_memory=True
     )
     logger.info("Train dataloader constructed")
     test_dl = DataLoader(
@@ -176,6 +178,7 @@ def build_dataloaders(
         batch_size=batch_size,
         collate_fn=collate_fn,
         num_workers=n_workers,
+        pin_memory=True
     )
     logger.info("Test dataloader constructed")
     if debug:
@@ -184,6 +187,7 @@ def build_dataloaders(
             batch_size=batch_size,
             collate_fn=collate_fn,
             num_workers=n_workers,
+            pin_memory=True
         )
         logger.info("Debug dataloader constructed")
     else:
@@ -394,6 +398,7 @@ if __name__ == "__main__":
         cbow_collate_fn,
         chunk_size=chunk_size,
         neighborhood_size=window_size,
+        tokenizer=tokenizer,
     )
     n_debug_samples = train_cfg["n_debug_samples"]
     debug_ds = train_ds[:n_debug_samples]

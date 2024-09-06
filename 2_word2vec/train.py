@@ -1,14 +1,17 @@
+import datetime
 import math
 import os
 import random
 import shutil
+import time
 from datetime import datetime
 from functools import partial
 from pathlib import Path
 from pprint import pprint
+from time import perf_counter
+from timeit import default_timer as timer
 from typing import TypeAlias
 
-import datasets
 import lightning as L
 import matplotlib.pyplot as plt
 import matplotlib_inline.backend_inline
@@ -159,15 +162,21 @@ def train(
         logger.info(f"Epoch: {epoch_idx}")
         print("\n" + term_size * "_" + "\n")
         n_updates = 1_000
-        tqdm_min_iters = len(train_dl) / n_updates
-        for batch_idx, (X, y) in tqdm(
-            enumerate(train_dl),
-            total=len(train_dl),
-            desc="Processing batches",
-            position=0,
-            leave=True,
-            miniters=tqdm_min_iters,
-        ):
+        min_log_iters = len(train_dl) / n_updates
+        batch_start_time = timer()
+        for batch_idx, (X, y) in enumerate(train_dl):
+            if batch_idx % min_log_iters == 0:
+                cur_time = timer()
+                if batch_idx == 0:
+                    estimated_completion_time = len(train_dl) * cur_time
+                    completion_time_stamp = datetime.fromtimestamp(
+                        batch_start_time + estimated_completion_time
+                    )
+                elapsed_time = batch_start_time - cur_time
+                logger.info("\n")
+                logger.info(f"Processing batch {batch_idx}/{len(train_dl)}")
+                logger.info(f"Current elapsed time: {elapsed_time}")
+                logger.info(f"Estimated completion time: {completion_time_stamp}")
             X = X.to(device)
             y = y.to(device)
             y_hat = model(X)

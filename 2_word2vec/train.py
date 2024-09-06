@@ -114,15 +114,31 @@ def train(
     train_dl: DataLoader,
     test_dl: DataLoader,
     hyperparams: dict,
+    resume: bool = False,
 ) -> None:
     assert hyperparams is not None, "Must supply a dictionary"
     run_id = hyperparams["run_id"]
+    if resume:
+        mw_path = Path("./checkpoints/GPU_run_1")  # TODO: replace with run id
+        logger.info(f"Resuming training, loading model at {mw_path}")
+        checkpoint = torch.load(mw_path)
+        model.load_state_dict(checkpoint)
+        # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    else:
+        logger.info("Initializing model weights")
+        initialize_model_weights(model)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Using device: {device}")
     model = model.to(device)
+
     metrics_logging_path = Path(f"./runs/{run_id}").absolute()
+    logger.info(f"Logging metrics to {metrics_logging_path}")
     if not metrics_logging_path.exists():
+        logger.warning("Metrics logging directory not found, creating...")
         metrics_logging_path.mkdir(parents=True)
     metrics_logger = SummaryWriter(log_dir=metrics_logging_path)
+
     ds_size = len(train_dl.dataset)
 
     chkpt_inter = hyperparams["checkpoint_interval"]
@@ -135,7 +151,7 @@ def train(
     if not chkpt_dir.exists():
         chkpt_dir.mkdir(parents=True)
     for epoch_idx in range(n_epochs):
-        logger.info(f"\nEpoch: {epoch_idx}\n")
+        logger.info(f"Epoch: {epoch_idx}")
         print("\n" + term_size * "_" + "\n")
         for batch_idx, (X, y) in tqdm(enumerate(train_dl)):
             X = X.to(device)
@@ -266,13 +282,6 @@ if __name__ == "__main__":
     )
     lr = hyperparams["lr"]
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    model_weights = Path("./checkpoints/GPU_run_1")
-    # checkpoint = torch.load(model_weights, weights_only=True)
-    model.load_state_dict(model_weights)
-    # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-    # loss = checkpoint["loss"]
-    logger.info("Initializing model weights")
-    # initialize_model_weights(model)
     logger.info("Beginning training loop...")
     train(
         model=model,
@@ -280,4 +289,5 @@ if __name__ == "__main__":
         train_dl=train_dl,
         test_dl=test_dl,
         hyperparams=hyperparams,
+        resume=True,
     )

@@ -13,6 +13,9 @@ from time import perf_counter
 from timeit import default_timer as timer
 from typing import TypeAlias, Callable, TypeVar
 
+from rich.console import Console
+from rich.table import Table
+
 import lightning as L
 import matplotlib.pyplot as plt
 import matplotlib_inline.backend_inline
@@ -38,6 +41,14 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 W2V: TypeAlias = W2V_CBOW
+
+
+class TermColors:
+    GOOD = '\033[92m'
+    BAD = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 
 def set_seeds(seed: int) -> None:
@@ -214,20 +225,19 @@ def train(
         metrics_logging_path.mkdir(parents=True)
     metrics_logger = SummaryWriter(log_dir=str(metrics_logging_path))
 
-    ds_size = len(train_dl)
-    log_inter = len(train_dl) * training_cfg["logging_interval"]
-    chkpt_inter = len(train_dl) * training_cfg["ckpt_interval"]
+    log_inter = math.floor(len(train_dl) * training_cfg["logging_interval"])
+    chkpt_inter = math.floor(len(train_dl) * training_cfg["ckpt_interval"])
     n_epochs = training_cfg["n_epochs"]
 
     model.train()
+    prev_loss = 0
     chkpt_idx = 0
     chkpt_dir = Path(f"./checkpoints/{run_id}")
     if not chkpt_dir.exists():
         chkpt_dir.mkdir(parents=True)
     for epoch_idx in range(n_epochs):
         logger.info(f"Epoch: {epoch_idx}")
-        print("\n" + term_size * "_" + "\n")
-        batch_start_time = timer()
+        print(term_size * "_")
         for batch_idx, (X, y) in enumerate(train_dl):
             X = X.to(device)
             y = y.to(device)
@@ -238,23 +248,24 @@ def train(
             optimizer.zero_grad()
             if batch_idx % log_inter == 0:
                 metrics_logger.add_scalar("training_loss", loss.item())
-                loss, current = loss.item(), batch_idx * ds_size + len(X)
-
-                cur_time = timer()
+                loss = loss.item()
+                batch_idx_str_len = len(str(batch_idx))
+                train_dl_str_len = len(str(len(train_dl)))
+                batch_str_delta = train_dl_str_len - batch_idx_str_len
                 if batch_idx == 0:
-                    estimated_completion_time = len(train_dl) * cur_time
-                    completion_time_stamp = datetime.fromtimestamp(
-                        batch_start_time + estimated_completion_time
-                    )
-                elapsed_time = batch_start_time - cur_time
-                logger.info("\n")
-                logger.info(f"Processing batch {batch_idx}/{len(train_dl)}")
-                logger.info(f"Current elapsed time: {elapsed_time}")
-                logger.info(f"Estimated completion time: {completion_time_stamp}")
-                logger.info(f"loss: {loss:>7f}  [{current:>5d}/{ds_size:>5d}]")
-
+                    logger.info(
+                        f"{TermColors.UNDERLINE}Loss{TermColors.ENDC}: {loss:<7f} [{batch_str_delta * '0'}{batch_idx}/{TermColors.BOLD}{len(train_dl)}{TermColors.ENDC}]")
+                else:
+                    if prev_loss > loss:
+                        logger.info(
+                            f"{TermColors.UNDERLINE}Loss{TermColors.ENDC}: {TermColors.GOOD}{loss:<7f}{TermColors.ENDC} [{batch_str_delta * '0'}{batch_idx}/{TermColors.BOLD}{len(train_dl)}{TermColors.ENDC}]")
+                    else:
+                        logger.info(
+                            f"{TermColors.UNDERLINE}Loss{TermColors.ENDC}: {TermColors.BAD}{loss:<7f}{TermColors.ENDC} [{batch_str_delta * '0'}{batch_idx}/{TermColors.BOLD}{len(train_dl)}{TermColors.ENDC}]")
+                    prev_loss = loss
             if batch_idx % chkpt_inter == 0:
-                logger.info(f"Saving checkpoint to: {chkpt_dir / f'checkpoint_{chkpt_idx}.pth'}")
+                logger.info(
+                    f"{TermColors.BOLD}Saving checkpoint to: {chkpt_dir / f'checkpoint_{chkpt_idx}.pth'}{TermColors.ENDC}")
                 torch.save(
                     {
                         "epoch": epoch_idx,
@@ -265,6 +276,7 @@ def train(
                     chkpt_dir / f"checkpoint_{chkpt_idx}.pth",
                 )
                 chkpt_idx += 1
+
         logger.info(f"Saving epoch checkpoint to: {f'checkpoint_epoch_{chkpt_idx}.pth'}")
         torch.save(
             {
@@ -294,6 +306,7 @@ if __name__ == "__main__":
     print("        ______\///____\///_______\///////////////________\///________")
     print("\n" + term_size * "=" + "\n")
     ##############################################################################
+    console = Console()
 
     # Load training configuration
     training_cfg_path = Path("./training_config.toml")
@@ -303,6 +316,34 @@ if __name__ == "__main__":
     cfg = toml.load(training_cfg_path)
     h_params = cfg["Model"]
     train_cfg = cfg["Train"]
+
+    model_table = Table(title="Model Configurations")
+    model_table.add_column("Key", no_wrap=True)
+    model_table.add_column("Value")
+    model_table.add_row("Batch Size", str(h_params["batch_size"]), style="orange_red1")
+    model_table.add_row("Window Size", str(h_params["window_size"]), style="orange_red1")
+    model_table.add_row("Embedding Dimension", str(h_params["embedding_dim"]), style="orange_red1")
+    console.print(model_table)
+
+    training_table = Table(title="Training Configurations")
+    training_table.add_column("Key", no_wrap=True)
+    training_table.add_column("Value")
+    training_table.add_row("Mode", train_cfg["mode"], style="dodger_blue1")
+    training_table.add_row("Run Id", train_cfg["run_id"], style="dodger_blue1")
+    training_table.add_row("Dataset Path", train_cfg["dataset_path"], style="dodger_blue1")
+    training_table.add_row("Dataset Name", train_cfg["dataset_name"], style="dodger_blue1")
+    training_table.add_row("Tokenizer Path", train_cfg["tokenizer_path"], style="dodger_blue1")
+    training_table.add_row("Number of Debug Samples", str(train_cfg["n_debug_samples"]), style="orange_red1")
+    training_table.add_row("Seed", str(train_cfg["seed"]), style="orange_red1")
+    training_table.add_row("Test Size", str(train_cfg["test_size"]), style="orange_red1")
+    training_table.add_row("Number of Data Loader Workers", str(train_cfg["n_dl_workers"]), style="orange_red1")
+    training_table.add_row("Evaluation Interval", str(train_cfg["val_interval"]), style="orange_red1")
+    training_table.add_row("Checkpoint Interval", str(train_cfg["ckpt_interval"]), style="orange_red1")
+    training_table.add_row("Logging Interval", str(train_cfg["logging_interval"]), style="orange_red1")
+    training_table.add_row("Number of Epochs", str(train_cfg["n_epochs"]), style="orange_red1")
+    training_table.add_row("Learning Rate", str(train_cfg["lr"]), style="orange_red1")
+    training_table.add_row("Resume Training", str(train_cfg["resume"]), style="purple")
+    console.print(training_table)
 
     mode = train_cfg["mode"]
     window_size = h_params["window_size"]

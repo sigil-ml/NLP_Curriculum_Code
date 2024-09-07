@@ -124,6 +124,7 @@ def test_step(
     )
     et["test/loss"].append(test_loss)
     et["test/acc"].append(correct)
+    model.train()
 
 
 def val_step(
@@ -153,6 +154,7 @@ def val_step(
     )
     et["val/loss"].append(val_loss)
     et["val/acc"].append(correct)
+    model.train()
 
 
 def gen_epoch_str(epoch_idx: int) -> str:
@@ -306,11 +308,11 @@ def train(
         for batch_idx, (X, y) in enumerate(train_dl):
             X = X.to(device)
             y = y.to(device)
+            optimizer.zero_grad()
             y_hat = model(X)
             loss = loss_fn(y_hat, y)
             loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
 
             # Validation
             if batch_idx % val_iter == 0:

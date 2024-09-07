@@ -74,7 +74,7 @@ def cbow_collate_fn(
             continue
         seq_len = len(encoding.ids)
         n_possible_chunks = seq_len // chunk_size
-        for i in range(0, n_possible_chunks * chunk_size, chunk_size):
+        for i in range(n_possible_chunks * chunk_size):
             chunk = encoding.ids[i : i + chunk_size]
             output = chunk.pop(neighborhood_size)
             batch_input.append(chunk)
@@ -182,8 +182,13 @@ def prepare_dataset(
         ds = load_dataset(path)
     logger.info("Producing train/test splits")
     ds = ds["train"].train_test_split(test_size=test_size)
-    ds["val"] = ds["test"][: int(len(ds["test"]) * 0.5)]
-    ds["test"] = ds["test"][int(len(ds["test"]) * 0.5) :]
+    test_ds = ds["test"].train_test_split(test_size=0.5)
+    ds["val"] = test_ds["train"]
+    ds["test"] = test_ds["test"]
+    logger.info("Dataset splits produced!")
+    logger.info(f"Train size: {len(ds['train'])}")
+    logger.info(f"Validation size: {len(ds['val'])}")
+    logger.info(f"Test size: {len(ds['test'])}")
     return ds
 
 
@@ -217,7 +222,7 @@ def build_dataloaders(
         num_workers=n_workers,
         pin_memory=True,
     )
-    logger.info("Train dataloader constructed")
+    logger.info("Validation dataloader constructed")
     test_dl = DataLoader(
         test_ds,
         batch_size=batch_size,

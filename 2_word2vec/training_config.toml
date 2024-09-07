@@ -1,24 +1,24 @@
 [Model]
-batch_size = 512
+batch_size = 96
 window_size = 5
 embedding_dim = 512
-optimimzer = "RAdam"
+optimimzer = "Adam"
 
 [Train]
 mode = "CBOW"
-run_id = "CBOW_W2V_5W_512"
+run_id = "Mac_CBOW_W2V_5W_512"
 dataset_path = "roneneldan/TinyStories"
 dataset_name = "default"
 tokenizer_path = "models/tokenizer.json"
 n_debug_samples = 100
 seed = 577
-test_size = 0.1
+test_size = 0.2
 n_dl_workers = 8
 val_interval = 0.05
 ckpt_interval = 0.1
 logging_interval = 0.01
 n_epochs = 20
-lr = 0.001
+lr = 0.025
 resume = false
 
 [Misc]

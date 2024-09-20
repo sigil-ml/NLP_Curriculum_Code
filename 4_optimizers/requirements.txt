@@ -1,0 +1,19 @@
+--find-links https://download.pytorch.org/whl/cu124
+torch
+python-dotenv
+seaborn
+datasets
+transformers
+tokenizers
+matplotlib
+numpy==1.*
+tensorboard
+tqdm
+jupyterlab
+loguru
+toml
+rich
+black
+jax[cuda12]
+matplotlib
+ipython

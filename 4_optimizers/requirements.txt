@@ -17,3 +17,4 @@ black
 jax[cuda12]
 matplotlib
 ipython
+plotly_express

@@ -111,26 +111,6 @@ def create_optimizer_figure_2d(
             )
             approximated_fn_traces.append(approximated_surface_trace)
 
-    with timer("Convergence Circle Plot Creation", perf_profiling):
-        _theta = jnp.linspace(0, 2 * jnp.pi, 100)
-
-        r = convergence_criteria * 50
-        x_circle = true_thetas[0] + r * jnp.cos(_theta)
-        y_circle = true_thetas[1] + r * jnp.sin(_theta)
-
-        z_circle = jnp.sin(x_circle) * jnp.cos(y_circle)
-        z_circle *= 0.2 * jnp.max(z_circle)
-
-        circle_trace = go.Scatter(
-            x=x_circle,
-            y=y_circle,
-            mode="lines",
-            line={"color": "lightgreen", "width": 3},
-            name="Convergence Radius",
-            showlegend=False,
-        )
-        optimization_path_traces.append(circle_trace)
-
     with timer("Loss Surface Plot Creation", perf_profiling):
         theta1s = jnp.array(theta1s)
         theta2s = jnp.array(theta2s)
@@ -160,6 +140,9 @@ def create_optimizer_figure_2d(
             z_loss.append(row_loss)
 
         z_loss = jnp.array(z_loss)
+        min_loss = z_loss.argmin()
+        loss_argmins = jnp.unravel_index(min_loss, z_loss.shape)
+        loss_argmins = [argmin.item() for argmin in loss_argmins]
         z_loss_range = jnp.absolute(z_loss.max() - z_loss.min())
         z_loss -= 0.01 * z_loss_range
         z_loss = z_loss.tolist()
@@ -171,6 +154,26 @@ def create_optimizer_figure_2d(
             showscale=False,
         )
         optimization_path_traces.append(loss_surface_trace)
+
+        with timer("Convergence Circle Plot Creation", perf_profiling):
+            _theta1 = gtheta1s[loss_argmins[0]]
+            _theta2 = gtheta2s[loss_argmins[1]]
+
+            _theta = jnp.linspace(0, 2 * jnp.pi, 100)
+
+            r = gtheta_range * 1e-2
+            x_circle = _theta1 + r * jnp.cos(_theta)
+            y_circle = _theta2 + r * jnp.sin(_theta)
+
+            circle_trace = go.Scatter(
+                x=x_circle,
+                y=y_circle,
+                mode="lines",
+                line={"color": "lightgreen", "width": 3},
+                name="Convergence Radius",
+                showlegend=False,
+            )
+            optimization_path_traces.append(circle_trace)
 
     with timer("Optimizer Path Plot Creation", perf_profiling):
         for i in range(n_iterations):
@@ -198,12 +201,12 @@ def create_optimizer_figure_2d(
         fig.add_trace(optimization_path_traces[2], row=1, col=2)
         # Add approximated function/optimizer steps to the figure
         frames = []
-        n_frames = len(optimization_path_traces)
+        n_frames = len(approximated_fn_traces)
         for i in range(1, n_frames):
             frame = go.Frame(
                 data=[
                     approximated_fn_traces[i],
-                    optimization_path_traces[i],
+                    optimization_path_traces[i + 1],
                 ],
                 traces=[3, 4],
                 name=f"Optimization Step {i}",

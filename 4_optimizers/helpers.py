@@ -202,7 +202,7 @@ def create_optimizer_figure_2d(
         # Add approximated function/optimizer steps to the figure
         frames = []
         n_frames = len(approximated_fn_traces)
-        for i in range(1, n_frames):
+        for i in range(1, n_frames - 1):
             frame = go.Frame(
                 data=[
                     approximated_fn_traces[i],

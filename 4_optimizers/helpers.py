@@ -248,7 +248,7 @@ def create_optimizer_figure_true(
 
     fig = go.Figure()
     fig.update_layout(title=title)
-    fig.update_layout(height=800)
+    fig.update_layout(height=800, width=800)
 
     # These two lists will hold the traces for our animation logic. The approximated list will start
     # with the true function and then add the approximated function for each iteration. The
@@ -311,6 +311,7 @@ def create_optimizer_figure_true(
 
         frames = []
         n_frames = len(x_path)
+        print(len(traces))
         for i in range(1, n_frames - 1):
             frame = go.Frame(
                 data=[traces[i + 2]],

@@ -1,4 +1,5 @@
-import inspect
+"""Helper functions for optimization notebook."""
+
 import shutil
 import time
 from contextlib import contextmanager
@@ -9,10 +10,7 @@ import jax.random as random
 import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
-
-# from jax import jit
 from plotly.subplots import make_subplots
-from scipy.ndimage import gaussian_filter
 
 pio.templates.default = "plotly_white"
 
@@ -53,14 +51,12 @@ def generate_examples(
 
 
 def create_optimizer_figure_2d(
-    fn: Callable,
+    f_true: Callable,
+    f_pred: Callable,
     loss_fn: Callable,
-    true_thetas: tuple[float | int, float | int],
-    convergence_criteria: float,
     theta1s: list[float | int],
     theta2s: list[float | int],
     losses: list[float],
-    f_preds: list[Callable],
     n_iterations: int,
     perf_profiling: bool = False,
 ) -> go.Figure:
@@ -85,8 +81,9 @@ def create_optimizer_figure_2d(
     fig.update_layout(height=600)
 
     # These two lists will hold the traces for our animation logic. The approximated list will start
-    # with the true function and then add the approximated function for each iteration. The optimization
-    # will start with the loss surface and then add the optimizer path for each iteration.
+    # with the true function and then add the approximated function for each iteration. The
+    # optimization will start with the loss surface and then add the optimizer path for each
+    # iteration.
     approximated_fn_traces = []
     optimization_path_traces = []
     slider_steps = []
@@ -95,17 +92,17 @@ def create_optimizer_figure_2d(
     with timer("True 3D Plot Creation", perf_profiling):
         xs = jnp.arange(-10, 10, 0.1)
         ys = jnp.arange(-10, 10, 0.1)
-        zs = jnp.array([fn(x, ys) for x in xs])
+        zs = jnp.array([f_true(x, ys) for x in xs])
         true_function_surface = go.Surface(
             z=zs, x=xs, y=ys, colorscale="Blues", showscale=False
         )
         approximated_fn_traces.append(true_function_surface)
 
     with timer("Predicted 3D Animation Creation", perf_profiling):
-        for i, f_pred in enumerate(f_preds):
+        for i in range(n_iterations):
             theta1 = theta1s[i]
             theta2 = theta2s[i]
-            pred_zs = [f_pred(x, ys, theta1, theta2) for x in xs]
+            pred_zs = [f_pred(theta1, theta2, x, ys) for x in xs]
             approximated_surface_trace = go.Surface(
                 z=pred_zs, x=xs, y=ys, showscale=False, colorscale="OrRd"
             )
@@ -118,46 +115,35 @@ def create_optimizer_figure_2d(
 
         theta_min, theta_max = thetas.min(), thetas.max()
         gtheta_range = jnp.absolute(theta_max - theta_min)
-
-        gtheta1s = jnp.arange(
-            theta_min - 0.2 * gtheta_range,
-            theta_max + 0.2 * gtheta_range,
-            gtheta_range / 20,
-        )
-
-        gtheta2s = gtheta1s.copy()
+        gtheta1s = jnp.linspace(theta_min, theta_max, 50)
+        gtheta2s = jnp.linspace(theta_min, theta_max, 50)
 
         z_loss = []
-        n_examples = len(gtheta1s) * len(gtheta2s)
-        examples = generate_examples(fn, n_examples, random.PRNGKey(0))
+        examples = generate_examples(f_true, 1, random.PRNGKey(0))
 
-        for theta1 in gtheta1s:
+        x, y, z = examples[0]
+        min_loss = jnp.inf
+        min_thetas = []
+        for t1 in gtheta1s:
             row_loss = []
-            for theta2 in gtheta2s:
-                x, y, z = examples.pop()
-                loss = loss_fn(theta2, theta1, x, y, z).item()
+            for t2 in gtheta2s:
+                loss = loss_fn(t1, t2, f_pred, x, y, z).item()
+                if loss < min_loss:
+                    min_loss = loss
+                    min_thetas = (theta1, theta2)
                 row_loss.append(loss)
             z_loss.append(row_loss)
 
-        z_loss = jnp.array(z_loss)
-        min_loss = z_loss.argmin()
-        loss_argmins = jnp.unravel_index(min_loss, z_loss.shape)
-        loss_argmins = [argmin.item() for argmin in loss_argmins]
-        z_loss_range = jnp.absolute(z_loss.max() - z_loss.min())
-        z_loss -= 0.01 * z_loss_range
-        z_loss = z_loss.tolist()
+        z_loss = jnp.array(z_loss).T.tolist()
 
         loss_surface_trace = go.Contour(
-            x=gtheta1s,
-            y=gtheta2s,
-            z=z_loss,
-            showscale=False,
+            x=gtheta1s, y=gtheta2s, z=z_loss, showscale=False, ncontours=100
         )
         optimization_path_traces.append(loss_surface_trace)
 
         with timer("Convergence Circle Plot Creation", perf_profiling):
-            _theta1 = gtheta1s[loss_argmins[0]]
-            _theta2 = gtheta2s[loss_argmins[1]]
+            _theta1 = min_thetas[0]
+            _theta2 = min_thetas[1]
 
             _theta = jnp.linspace(0, 2 * jnp.pi, 100)
 

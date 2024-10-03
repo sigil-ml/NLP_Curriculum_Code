@@ -237,6 +237,7 @@ def create_optimizer_figure_true(
     x_path: list[float],
     y_path: list[float],
     n_iterations: int,
+    graph_type: str = "3d",
     perf_profiling: bool = False,
 ) -> go.Figure:
     r"""This function creates a plotly figure that contains two columns of plots. The
@@ -262,9 +263,14 @@ def create_optimizer_figure_true(
         xs = jnp.arange(-10, 10, 0.1)
         ys = jnp.arange(-10, 10, 0.1)
         zs = jnp.array([fn(x, ys) for x in xs])
-        true_function_contour = go.Surface(
-            z=zs, x=xs, y=ys, colorscale="Blues", showscale=False
-        )
+        if graph_type == "3d":
+            true_function_contour = go.Surface(
+                z=zs, x=xs, y=ys, colorscale="Blues", showscale=False
+            )
+        elif graph_type == "contour":
+            true_function_contour = go.Contour(
+                z=zs, x=xs, y=ys, colorscale="Blues", showscale=False
+            )
 
         traces.append(true_function_contour)
 
@@ -293,19 +299,33 @@ def create_optimizer_figure_true(
     with timer("Optimizer Path Plot Creation", perf_profiling):
         for i in range(n_iterations):
             zs = [fn(_x, _y).item() for _x, _y in zip(x_path[: i + 1], y_path[: i + 1])]
-            optimizer_scatter_trace = go.Scatter3d(
-                x=x_path[: i + 1],
-                y=y_path[: i + 1],
-                z=zs,
-                line={"color": "orange", "width": 5},
-                marker={
-                    "size": 4,
-                    "color": zs,
-                    "colorscale": "Turbo",
-                },
-                name="Optimizer Path",
-                showlegend=False,
-            )
+            if graph_type == "3d":
+                optimizer_scatter_trace = go.Scatter3d(
+                    x=x_path[: i + 1],
+                    y=y_path[: i + 1],
+                    z=zs,
+                    line={"color": "orange", "width": 5},
+                    marker={
+                        "size": 4,
+                        "color": zs,
+                        "colorscale": "Turbo",
+                    },
+                    name="Optimizer Path",
+                    showlegend=False,
+                )
+            elif graph_type == "contour":
+                optimizer_scatter_trace = go.Scatter(
+                    x=x_path[: i + 1],
+                    y=y_path[: i + 1],
+                    line={"color": "orange", "width": 5},
+                    marker={
+                        "size": 4,
+                        "color": zs,
+                        "colorscale": "Turbo",
+                    },
+                    name="Optimizer Path",
+                    showlegend=False,
+                )
             traces.append(optimizer_scatter_trace)
 
     with timer("Animation Logic", perf_profiling):

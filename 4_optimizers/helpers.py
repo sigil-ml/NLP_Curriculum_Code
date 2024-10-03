@@ -1,5 +1,6 @@
 """Helper functions for optimization notebook."""
 
+import random as py_random
 import shutil
 import time
 from contextlib import contextmanager
@@ -119,14 +120,14 @@ def create_optimizer_figure_2d(
         gtheta2s = jnp.linspace(theta_min, theta_max, 50)
 
         z_loss = []
-        examples = generate_examples(f_true, 1, random.PRNGKey(0))
+        examples = generate_examples(f_true, 1000, random.PRNGKey(0))
 
-        x, y, z = examples[0]
         min_loss = jnp.inf
         min_thetas = []
         for t1 in gtheta1s:
             row_loss = []
             for t2 in gtheta2s:
+                x, y, z = py_random.choices(examples)[0]
                 loss = loss_fn(t1, t2, f_pred, x, y, z).item()
                 if loss < min_loss:
                     min_loss = loss
@@ -240,21 +241,18 @@ def create_optimizer_figure_true(
     graph_type: str = "3d",
     perf_profiling: bool = False,
 ) -> go.Figure:
-    r"""This function creates a plotly figure that contains two columns of plots. The
-    column is a 3D surface plot of the function along with the predicted function. The
-    second column is a 3D surface plot of the loss function along with the path of the
-    optimizer and a circle showing the convergence criteria. The plot has a slider for
-    each iteration of the optimizer, updating the plot with the optimizer's path.
+    r"""This function creates a plotly figure that contains a 3D surface plot of the function
+    as well as the path the optimizer took to reach the minimum. The plot has a slider for each
+    iteration of the optimizer, updating the plot with the optimizer's path.
     """
 
     fig = go.Figure()
     fig.update_layout(title=title)
     fig.update_layout(height=800, width=800)
 
-    # These two lists will hold the traces for our animation logic. The approximated list will start
-    # with the true function and then add the approximated function for each iteration. The
-    # optimization will start with the loss surface and then add the optimizer path for each
-    # iteration.
+    # These two lists will be used for the animation logic below. The traces list will hold
+    # the various traces that we will create. The first one will be the trace of the function
+    # itself and the rest will be the optimizer path.
 
     traces = []
     slider_steps = []
@@ -273,28 +271,6 @@ def create_optimizer_figure_true(
             )
 
         traces.append(true_function_contour)
-
-    with timer("Convergence Circle Plot Creation", perf_profiling):
-        _theta1 = 0
-        _theta2 = 0
-
-        _theta = jnp.linspace(0, 2 * jnp.pi, 100)
-
-        r = 1e-1
-        x_circle = _theta1 + r * jnp.cos(_theta)
-        y_circle = _theta2 + r * jnp.sin(_theta)
-
-        circle_trace = go.Scatter(
-            x=x_circle,
-            y=y_circle,
-            mode="lines",
-            line={"color": "lightgreen", "width": 3},
-            name="Convergence Radius",
-            showlegend=False,
-        )
-        # traces.append(circle_trace)
-
-    # optimizer_zs = jnp.array([fn(x, ) for x in xs])
 
     with timer("Optimizer Path Plot Creation", perf_profiling):
         for i in range(n_iterations):
@@ -331,7 +307,6 @@ def create_optimizer_figure_true(
     with timer("Animation Logic", perf_profiling):
         # Add initial traces to the figure
         fig.add_trace(traces[0])  # True function
-        # fig.add_trace(traces[1])  # Convergence Circle
         fig.add_trace(traces[1])  # Optimizer Path
 
         frames = []

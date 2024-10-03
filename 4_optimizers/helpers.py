@@ -229,3 +229,123 @@ def create_optimizer_figure_2d(
         fig.update_layout(sliders=sliders)
 
     return fig
+
+
+def create_optimizer_figure_true(
+    fn: Callable,
+    title: str,
+    x_path: list[float],
+    y_path: list[float],
+    n_iterations: int,
+    perf_profiling: bool = False,
+) -> go.Figure:
+    r"""This function creates a plotly figure that contains two columns of plots. The
+    column is a 3D surface plot of the function along with the predicted function. The
+    second column is a 3D surface plot of the loss function along with the path of the
+    optimizer and a circle showing the convergence criteria. The plot has a slider for
+    each iteration of the optimizer, updating the plot with the optimizer's path.
+    """
+
+    fig = go.Figure()
+    fig.update_layout(title=title)
+    fig.update_layout(height=800)
+
+    # These two lists will hold the traces for our animation logic. The approximated list will start
+    # with the true function and then add the approximated function for each iteration. The
+    # optimization will start with the loss surface and then add the optimizer path for each
+    # iteration.
+
+    traces = []
+    slider_steps = []
+
+    with timer("True Function Contour Plot Creation", perf_profiling):
+        xs = jnp.arange(-10, 10, 0.1)
+        ys = jnp.arange(-10, 10, 0.1)
+        zs = jnp.array([fn(x, ys) for x in xs])
+        true_function_contour = go.Contour(
+            z=zs, x=xs, y=ys, colorscale="Blues", showscale=False
+        )
+
+        traces.append(true_function_contour)
+
+    with timer("Convergence Circle Plot Creation", perf_profiling):
+        _theta1 = 0
+        _theta2 = 0
+
+        _theta = jnp.linspace(0, 2 * jnp.pi, 100)
+
+        r = 1e-1
+        x_circle = _theta1 + r * jnp.cos(_theta)
+        y_circle = _theta2 + r * jnp.sin(_theta)
+
+        circle_trace = go.Scatter(
+            x=x_circle,
+            y=y_circle,
+            mode="lines",
+            line={"color": "lightgreen", "width": 3},
+            name="Convergence Radius",
+            showlegend=False,
+        )
+        traces.append(circle_trace)
+
+    with timer("Optimizer Path Plot Creation", perf_profiling):
+        for i in range(n_iterations):
+            optimizer_scatter_trace = go.Scatter(
+                x=x_path[: i + 1],
+                y=y_path[: i + 1],
+                line={"color": "orange", "width": 3},
+                marker={
+                    "size": 4,
+                    "colorscale": "OrRd",
+                },
+                name="Optimizer Path",
+                showlegend=False,
+            )
+            traces.append(optimizer_scatter_trace)
+
+    with timer("Animation Logic", perf_profiling):
+        # Add initial traces to the figure
+        fig.add_trace(traces[0])  # True function
+        fig.add_trace(traces[1])  # Convergence Circle
+        fig.add_trace(traces[2])  # Optimizer Path
+
+        frames = []
+        n_frames = len(x_path)
+        for i in range(1, n_frames - 1):
+            frame = go.Frame(
+                data=[traces[i + 2]],
+                traces=[2],
+                name=f"Optimization Step {i}",
+            )
+            frames.append(frame)
+
+        fig.frames = frames
+
+        # Create the slider steps
+        for i in range(n_frames):
+            step = {
+                "method": "animate",
+                "args": [
+                    [f"Optimization Step {i}"],
+                    {
+                        "frame": {"duration": 0, "redraw": True},
+                        "mode": "immediate",
+                        "transition": {"duration": 0},
+                    },
+                ],
+                "label": f"Optimization Step {i}",
+            }
+            slider_steps.append(step)
+
+        sliders = [
+            {
+                "active": 0,
+                "currentvalue": {"prefix": "Step: "},
+                "pad": {"t": 50},
+                "steps": slider_steps,
+            }
+        ]
+
+        fig.update_layout(sliders=sliders)
+
+    return fig

@@ -262,7 +262,7 @@ def create_optimizer_figure_true(
         xs = jnp.arange(-10, 10, 0.1)
         ys = jnp.arange(-10, 10, 0.1)
         zs = jnp.array([fn(x, ys) for x in xs])
-        true_function_contour = go.Contour(
+        true_function_contour = go.Surface(
             z=zs, x=xs, y=ys, colorscale="Blues", showscale=False
         )
 
@@ -286,17 +286,22 @@ def create_optimizer_figure_true(
             name="Convergence Radius",
             showlegend=False,
         )
-        traces.append(circle_trace)
+        # traces.append(circle_trace)
+
+    # optimizer_zs = jnp.array([fn(x, ) for x in xs])
 
     with timer("Optimizer Path Plot Creation", perf_profiling):
         for i in range(n_iterations):
-            optimizer_scatter_trace = go.Scatter(
+            zs = [fn(_x, _y).item() for _x, _y in zip(x_path[: i + 1], y_path[: i + 1])]
+            optimizer_scatter_trace = go.Scatter3d(
                 x=x_path[: i + 1],
                 y=y_path[: i + 1],
-                line={"color": "orange", "width": 3},
+                z=zs,
+                line={"color": "orange", "width": 5},
                 marker={
                     "size": 4,
-                    "colorscale": "OrRd",
+                    "color": zs,
+                    "colorscale": "Turbo",
                 },
                 name="Optimizer Path",
                 showlegend=False,
@@ -306,16 +311,16 @@ def create_optimizer_figure_true(
     with timer("Animation Logic", perf_profiling):
         # Add initial traces to the figure
         fig.add_trace(traces[0])  # True function
-        fig.add_trace(traces[1])  # Convergence Circle
-        fig.add_trace(traces[2])  # Optimizer Path
+        # fig.add_trace(traces[1])  # Convergence Circle
+        fig.add_trace(traces[1])  # Optimizer Path
 
         frames = []
         n_frames = len(x_path)
         print(len(traces))
         for i in range(1, n_frames - 1):
             frame = go.Frame(
-                data=[traces[i + 2]],
-                traces=[2],
+                data=[traces[i + 1]],
+                traces=[1],
                 name=f"Optimization Step {i}",
             )
             frames.append(frame)
